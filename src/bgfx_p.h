@@ -7092,14 +7092,23 @@ namespace bgfx
 		{
 			const uint32_t num = bx::min(_num, kMaxTransientBufferSize/_stride);
 
+			uint32_t avail = 0;
+
 			if (!_tb.m_chunks.isEmpty() )
 			{
 				const TransientBufferChunk& chunk = _tb.m_chunks[_tb.m_chunks.getCount()-1];
 				const uint64_t offset = bx::strideAlign(chunk.m_offset, _stride);
 
-				if (offset + uint64_t(num)*_stride <= chunk.m_size)
+				if (offset < chunk.m_size)
 				{
-					return num;
+					// Number of elements that fit into the contiguous space
+					// remaining in the current chunk for this stride.
+					avail = uint32_t( (chunk.m_size - offset)/_stride );
+
+					if (num <= avail)
+					{
+						return num;
+					}
 				}
 			}
 
@@ -7108,7 +7117,9 @@ namespace bgfx
 				: m_vertexBufferHandle.getNumHandles() < m_vertexBufferHandle.getMaxHandles()
 				;
 
-			return hasHandle ? num : 0;
+			// A new chunk would fit the whole request. Otherwise only the
+			// contiguous remainder of the current chunk is available.
+			return hasHandle ? num : avail;
 		}
 
 		const TransientBufferChunk& transientAlloc(TransientBuffer& _tb, uint32_t& _num, uint16_t _stride, uint32_t _minSize, bool _index, uint32_t& _offset)
