@@ -1815,7 +1815,7 @@ namespace bgfx
 
 		for (uint32_t ii = 0, num = m_numRenderItems; ii < num; ++ii)
 		{
-			m_sortKeys[ii]   = SortKey::remapView(submitKeys[ii], m_viewOrder);
+			m_sortKeys[ii]   = SortKey::encodeDepthOrder(SortKey::remapView(submitKeys[ii], m_viewOrder) );
 			m_sortValues[ii] = RenderItemCount(ii);
 		}
 
@@ -1827,6 +1827,14 @@ namespace bgfx
 			) );
 
 		bx::radixSort(m_sortKeys, s_ctx->m_tempKeys, m_sortValues, s_ctx->m_tempValues, m_numRenderItems);
+
+		// The tie-break fields were only held back for the comparison. Put them
+		// back, in sorted order, so renderers still recover the program from the
+		// key. They live below the view field, so no view remap is needed.
+		for (uint32_t ii = 0, num = m_numRenderItems; ii < num; ++ii)
+		{
+			m_sortKeys[ii] = SortKey::restoreDepthTieBreak(m_sortKeys[ii], submitKeys[m_sortValues[ii] ]);
+		}
 
 		reserveBlitKeys(m_numBlitItems);
 

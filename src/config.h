@@ -399,8 +399,12 @@ static_assert(bx::isPowerOf2(BGFX_CONFIG_VIEW_BLOCK) && 64 <= BGFX_CONFIG_VIEW_B
 #	define BGFX_CONFIG_MAX_DEPTH_BIAS_CACHE (4<<10)
 #endif //  BGFX_CONFIG_MAX_DEPTH_BIAS_CACHE
 
-/// Number of bits used for depth in the sort key. Default is 32.
-/// Reducing this allows more bits for other sort key fields.
+/// Number of bits used for depth in the program sort key (Default view mode).
+/// Default is 32. Reducing this allows more bits for other sort key fields.
+///
+/// Depth sorted views (DepthAscending/DepthDescending) always use the complete
+/// 32-bit depth value, so narrowing this setting can only turn distinct depths
+/// of a program sorted view into equals; it never changes depth ordering.
 #ifndef BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH
 #	define BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH 32
 #endif // BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH

@@ -459,8 +459,8 @@ namespace bgfx
 		{
 			Default,         //!< Default sort order.
 			Sequential,      //!< Sort in the same order in which submit calls were called.
-			DepthAscending,  //!< Sort draw call depth in ascending order.
-			DepthDescending, //!< Sort draw call depth in descending order.
+			DepthAscending,  //!< Sort draw call depth in ascending order. Draw calls with equal depth keep submission order, regardless of program or blend state.
+			DepthDescending, //!< Sort draw call depth in descending order. Draw calls with equal depth keep submission order, regardless of program or blend state.
 
 			Count
 		};

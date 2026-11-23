@@ -1364,12 +1364,21 @@ namespace bgfx
 	static constexpr uint8_t  kSortKeyDraw0ProgramShift   = kSortKeyDraw0AlphaRefShift - BGFX_CONFIG_SORT_KEY_NUM_BITS_PROGRAM;
 	static constexpr uint64_t kSortKeyDraw0ProgramMask    = uint64_t(BGFX_CONFIG_MAX_PROGRAMS-1)<<kSortKeyDraw0ProgramShift;
 
+	static_assert(BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH <= 32, "BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH must not exceed the 32-bit depth value.");
+	static_assert(uint16_t(kSortKeyDrawTypeBitShift) >= BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH + kSortKeyTransNumBits + kSortKeyAlphaRefNumBits + BGFX_CONFIG_SORT_KEY_NUM_BITS_PROGRAM, "Program sort key fields do not fit into 64 bits.");
+
 	static constexpr uint8_t  kSortKeyDraw0DepthShift     = kSortKeyDraw0ProgramShift - BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH;
 	static constexpr uint64_t kSortKeyDraw0DepthMask      = ( (uint64_t(1)<<BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH)-1)<<kSortKeyDraw0DepthShift;
 
 	//
-	static constexpr uint8_t  kSortKeyDraw1DepthShift     = kSortKeyDrawTypeBitShift - BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH;
-	static constexpr uint64_t kSortKeyDraw1DepthMask      = ( (uint64_t(1)<<BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH)-1)<<kSortKeyDraw1DepthShift;
+	// Depth ordered views must stack transparent surfaces by the complete depth
+	// value that was submitted, so the depth field of the depth sort key is
+	// always 32 bits wide. It deliberately does not follow
+	// BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH: narrowing that setting would make
+	// depths one mask apart sort as equal and silently reorder blending.
+	static constexpr uint8_t  kSortKeyDraw1DepthNumBits   = 32;
+	static constexpr uint8_t  kSortKeyDraw1DepthShift     = kSortKeyDrawTypeBitShift - kSortKeyDraw1DepthNumBits;
+	static constexpr uint64_t kSortKeyDraw1DepthMask      = ( (uint64_t(1)<<kSortKeyDraw1DepthNumBits)-1)<<kSortKeyDraw1DepthShift;
 
 	static constexpr uint8_t  kSortKeyDraw1BlendShift     = kSortKeyDraw1DepthShift - kSortKeyTransNumBits;
 	static constexpr uint64_t kSortKeyDraw1BlendMask      = uint64_t(0x3)<<kSortKeyDraw1BlendShift;
@@ -1379,6 +1388,14 @@ namespace bgfx
 
 	static constexpr uint8_t  kSortKeyDraw1ProgramShift   = kSortKeyDraw1AlphaRefShift - BGFX_CONFIG_SORT_KEY_NUM_BITS_PROGRAM;
 	static constexpr uint64_t kSortKeyDraw1ProgramMask    = uint64_t(BGFX_CONFIG_MAX_PROGRAMS-1)<<kSortKeyDraw1ProgramShift;
+
+	// Blend, alpha reference and program below the depth of a depth sorted key.
+	// They are carried through sorting only so the renderer can read the
+	// program back from the key; they are cleared before the sort so draws at
+	// the same depth compare equal and keep their submission order regardless
+	// of their material.
+	static constexpr uint64_t kSortKeyDraw1TieBreakMask   = kSortKeyDraw1BlendMask|kSortKeyDraw1AlphaRefMask|kSortKeyDraw1ProgramMask;
+	static_assert( (kSortKeyDraw1TieBreakMask & kSortKeyDraw1DepthMask) == 0, "Depth tie-break mask must not overlap the depth field.");
 
 	//
 	static constexpr uint8_t  kSortKeyDraw2SeqShift       = kSortKeyDrawTypeBitShift - BGFX_CONFIG_SORT_KEY_NUM_BITS_SEQ;
@@ -1403,6 +1420,7 @@ namespace bgfx
 	static_assert(BGFX_CONFIG_MAX_VIEWS <= (1<<kSortKeyViewNumBits) );
 	static_assert(BGFX_CONFIG_MAX_DRAW_CALLS <= (1<<BGFX_CONFIG_SORT_KEY_NUM_BITS_SEQ), "BGFX_CONFIG_MAX_DRAW_CALLS must fit into BGFX_CONFIG_SORT_KEY_NUM_BITS_SEQ bits.");
 	static_assert( (BGFX_CONFIG_MAX_PROGRAMS & (BGFX_CONFIG_MAX_PROGRAMS-1) ) == 0); // Must be power of 2.
+	static_assert(kSortKeyDrawTypeBitShift >= kSortKeyDraw1DepthNumBits + kSortKeyTransNumBits + kSortKeyAlphaRefNumBits + BGFX_CONFIG_SORT_KEY_NUM_BITS_PROGRAM, "Depth sort key fields do not fit into 64 bits.");
 	static_assert( (0 // Render key mask shouldn't overlap.
 		| kSortKeyViewMask
 		| kSortKeyDrawBit
@@ -1485,6 +1503,9 @@ namespace bgfx
 	// |        | |                               | +-blend   |         |
 	// |        | +-key type                depth-+   program-+         |
 	// |        |                                                       |
+	// |        |depth is the full 32 bits submitted; the blend/ref/    |
+	// |        |program fields below it are cleared before the sort and|
+	// |        |restored after, so equal depth keeps submission order. |
 	// |----------------------------------------------------------------| Draw Key 2 - Sequential
 	// |        |kkssssssssssssssssssssttrppppppppp                     |
 	// |        | ^                   ^ ^^        ^                     |
@@ -1615,6 +1636,34 @@ namespace bgfx
 			const uint64_t view    = uint64_t(_viewRemap[oldView]) << kSortKeyViewBitShift;
 			const uint64_t key     = (_key & ~kSortKeyViewMask) | view;
 			return key;
+		}
+
+		/// Returns true if the key was produced by a depth sorted view.
+		static bool isDepthKey(uint64_t _key)
+		{
+			return 0 != (_key & kSortKeyDrawBit)
+				&& kSortKeyDrawTypeDepth == (_key & kSortKeyDrawTypeMask)
+				;
+		}
+
+		/// Strips the fields that must not take part in the depth ordering, so
+		/// that draws at the same depth compare equal and keep submission order.
+		static uint64_t encodeDepthOrder(uint64_t _key)
+		{
+			return isDepthKey(_key)
+				? (_key & ~kSortKeyDraw1TieBreakMask)
+				: _key
+				;
+		}
+
+		/// Restores the fields that `encodeDepthOrder` held back, using the key
+		/// of the draw that ended up at this position.
+		static uint64_t restoreDepthTieBreak(uint64_t _key, uint64_t _submitKey)
+		{
+			return isDepthKey(_key)
+				? (_key | (_submitKey & kSortKeyDraw1TieBreakMask) )
+				: _key
+				;
 		}
 
 		void reset()

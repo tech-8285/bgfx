@@ -13,6 +13,8 @@ On the high level bgfx uses a **declarative API**: the user declares views, thei
 - **DepthAscending** - Sort by depth (front-to-back). Helps maximise early-Z rejection for opaque geometry.
 - **DepthDescending** - Sort by depth (back-to-front). Required for correct blending of transparent geometry.
 
+In both depth modes only the submitted depth value decides the order. Draw calls that land on exactly the same depth are not reordered by their shader program or blend state; they keep the order in which they were submitted, so a stack of transparent surfaces that depends on painter's order is preserved even when the surfaces use different materials. Because depth is compared in full, two depths that differ only in bits outside a narrowed sort key field are still ordered correctly.
+
 Sort key layout
 ~~~~~~~~~~~~~~~
 
@@ -21,6 +23,8 @@ Each draw call is encoded into a 64-bit sort key. The highest bits encode the **
 - **Program sort** (Default mode): ``[view | draw | type=0 | blend | alphaRef | program | depth]``
 - **Depth sort** (DepthAscending/DepthDescending): ``[view | draw | type=1 | depth | blend | alphaRef | program]``
 - **Sequence sort** (Sequential mode): ``[view | draw | type=2 | sequence | blend | alphaRef | program]``
+
+The depth field of the depth sort key is always 32 bits, so it holds the complete depth value passed to ``submit``. The ``blend``, ``alphaRef`` and ``program`` fields that follow it are not part of the ordering: they are cleared before the sort and restored afterwards, so draws at the same depth compare equal while the renderer can still read the program back from the key.
 
 Compute dispatches always use sequential ordering: ``[view | compute | sequence | program]``.
 
@@ -247,7 +251,7 @@ Buffer sizes
 Sort key
 ^^^^^^^^
 
-``BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH`` - Number of bits used for depth in the sort key. Default is 32. Reducing this allows more bits for other sort key fields.
+``BGFX_CONFIG_SORT_KEY_NUM_BITS_DEPTH`` - Number of bits used for depth in the program sort key (Default view mode). Default is 32. Reducing this allows more bits for other sort key fields. Depth sorted views always use the full 32-bit depth, so this setting never changes their ordering.
 
 ``BGFX_CONFIG_SORT_KEY_NUM_BITS_SEQ`` - Number of bits used for sequence number in the sort key. Default is 20. Determines the maximum number of draw calls per view in sequential mode (2^20 ≈ 1M).
 
